@@ -1,0 +1,49 @@
+--- 01 Nov 2020 ---
+
+> Change Data Pipeline
+
+1. Completed Adaptive Loss
+
+
+--- 26 Oct 2020 ---
+
+> Complete Adaptive Loss
+
+1. Adding adaptive loss.
+2. Finished embedding dict.
+
+
+--- 11 Sept 2020 ---
+
+> Check loss.py
+> Check for convergence
+
+1. Trainer works. Loss is decreasing finally.
+2. Added checkpoints and summary writer.
+
+
+--- 10 Sept 2020 ---
+
+> Check train.py
+> Look at davidsandberg repo
+
+1. added image_size from params to data.py and it works.
+2. created face_model in model.py 
+3. created trainer class in train.py
+
+
+--- 09 Sept 2020 ---
+
+> Check data.py
+> Create model.py and train.py
+
+1. Estimator is not working.
+
+
+--- 05 Sept 2020 ---
+
+> Learn about Estimator in TF.
+> Work on model.py
+
+1. Completed data.py haven't checked it.
+2. Completed train.py haven't checked it.
