@@ -1,37 +1,15 @@
-# Facenet-TF
-Facenet implementation using Tensorflow 2.x
+# Facenet TF
+Adaption of Facenet to perform one shot learning for dictionary classification of tropical rainforest species.
 
-Using Inception - V3 to find the n-dimensional embeddings which could represent a face such that it is distinguishable from faces of other people. Triplet loss is used to **minimise the intra-class variance** and **increase the inter-class vairance**. Three variations of triplet losses are used which can be found at `src/triplet_loss.py`.
+FaceNet is a fully end-to-end, one-shot learning deep learning algorithm that did not require significant amounts of data. FaceNet was modified to accommodate multispectral images for greater data aggregation. The combination of the different methods yielded a test accuracy of 54% across 15 classes.
 
 - `Triplet Loss` : A straight-forward procedure which finds triplets by iterating through all triplets formed.
 - `Hard Triplet Loss` : A procedure which chooses triplet pairs such that distance b/w -ve and anchor is less and the distance b/w anchor and +ve is more.
 - `Adaptive Triplet Loss` : The main idea to correct the triplet selection bias, so we try to minize the distribution shift between the batch and the tripet set.
 
-## Code Organization
-
-1. `train.py`           : Creates a trainer object for maintaing checkpoints, logs, train loop and args.
-2. `src/data.py`        : Creates tf.data.dataset from tfrecords in the specified directory.
-3. `src/model.py`       : Creates model class which gives embeddings from a image.
-4. `src/params.py`      : Creates paramters class from a json in the hyperparameters directory.
-5. `src/triplet_loss.py`: Loss functions and loss utility functions for for triplet loss.
-
-### How to run
-
-Train from scratch
-```
-python train.py --params_dir ./hyperparameters/batch_all.json --data_dir ./data/ 
-                --log_dir ./.logs/ --ckpt_dir ./.ckpt/ --restore 0
-```
-
-Restore from previous checkpoint
-```
-python train.py --params_dir --restore 1
-```
-
 ### Acknowlegments
 
- - [Face-Recognition-Triplet-Loss-on-Inception-v3](https://github.com/rishiraj95/Face-Recognition-Triplet-Loss-on-Inception-v3)  - Clean and well documented implementation of Triplet loss implementation.
- - [Face Recognition using Tensorflow](https://github.com/davidsandberg/facenet) - The evaluation script on LFW is used and modified to use TF2. Ideas from the documentation and code are also used.
+ - Dr. Ji Jon Sit from NTU EEE, for providing all the insights in this project, especially when dabbling with the greater granularities when it came to 
 
 ### References
 
