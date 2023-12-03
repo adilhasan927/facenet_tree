@@ -1,7 +1,7 @@
 import os
 import argparse
 import cv2
-import tensorflow as tf
+import torch
 import numpy as np
 
 from src.params import Params
@@ -9,9 +9,6 @@ from src.model  import face_model
 from src.triplet_loss import adapted_triplet_loss
 from sklearn.metrics import confusion_matrix, classification_report
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 image_size = 250
 
 class Tester():
@@ -23,17 +20,12 @@ class Tester():
         self.dictionary_embeddings = np.load(dictionary_embeddings,allow_pickle='TRUE').item()
         self.test_dir = test_dir
 
-        self.checkpoint = tf.train.Checkpoint(model=self.model,
-                                              train_steps=tf.Variable(0, dtype=tf.int64),
-                                              valid_steps=tf.Variable(0, dtype=tf.int64),
-                                              epoch=tf.Variable(0, dtype=tf.int64))
-        self.ckptmanager = tf.train.CheckpointManager(self.checkpoint, ckpt_dir, 3)
-
         self.loss = adapted_triplet_loss
         self.train_summary_writer = tf.summary.create_file_writer(log_dir)
 
-        self.checkpoint.restore(self.ckptmanager.latest_checkpoint)
-        print(f'\nRestored from Checkpoint : {self.ckptmanager.latest_checkpoint}\n')
+        model.load_state_dict(torch.load('model.pt'))
+        model.eval()
+        print(f'\nRestored from Checkpoint')
 
     def __call__(self, epoch):
         self.test()
@@ -68,14 +60,16 @@ class Tester():
         print(classification_report(test_labels, test_result))
 
     def test_step(self, image):
-        image = tf.expand_dims(image, axis=0)
+        image = image.unsqueeze(0)
         embedding = self.model(image)
-        embedding = tf.math.l2_normalize(embedding, axis=1, epsilon=1e-10)
+        embedding = torch.nn.functional.normalize(embedding, p=2, dim=1, eps=1e-10)
         calculated_distances = {}
 
         # Iteratively go through the dictionary of embeddings and find the minimum distance
         for key in self.dictionary_embeddings.keys():
-            distance = self.calculate_l2_norm(embedding.numpy(), self.dictionary_embeddings[key])
+            distance = self.calculate_l2_norm(
+                embedding.detach().cpu().numpy(),
+                self.dictionary_embeddings[key])
             calculated_distances[key] = distance
 
         # Return the minimum distance, that should be the most suitable class

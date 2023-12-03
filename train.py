@@ -2,19 +2,16 @@ import os
 import argparse
 import datetime
 import numpy as np
-import tensorflow as tf
+import torch
 from progressbar import *
 
 from src.params import Params
 from src.model import face_model
-from src.data   import get_dataset
+from src.data   import get_dataloader
 from src.triplet_loss import batch_all_triplet_loss, batch_hard_triplet_loss, adapted_triplet_loss
 
 import matplotlib.pyplot as plt
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 DISPLAY = False
 
 class Trainer():
@@ -25,46 +22,38 @@ class Trainer():
         self.valid       = validate
         self.model       = face_model(self.params)
 
-        self.lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(self.params.learning_rate,
-                                                                          decay_steps=10000, decay_rate=0.96, staircase=True)
-        self.optimizer   = tf.keras.optimizers.Adam(learning_rate=self.lr_schedule, beta_1=0.9, beta_2=0.999, epsilon=0.1)
-        self.checkpoint  = tf.train.Checkpoint(model=self.model, optimizer=self.optimizer, train_steps=tf.Variable(0,dtype=tf.int64),
-                                               valid_steps=tf.Variable(0,dtype=tf.int64), epoch=tf.Variable(0, dtype=tf.int64))
-        self.ckptmanager = tf.train.CheckpointManager(self.checkpoint, ckpt_dir, 3)
+        initial_learning_rate = self.params.learning_rate
+        self.optimizer   = torch.optim.Adam(lr=self.lr_schedule, betas=(0.9, 0.999), eps=0.1)
+        self.optimizer   = torch.optim.lr_scheduler.ExponentialLR(
+            self.optimizer, gamma=0.96, decay_steps=10_000)
         self.dictionary_embeddings = {}
 
         if self.params.triplet_strategy == "batch_all":
             self.loss = batch_all_triplet_loss
-            
         elif self.params.triplet_strategy == "batch_hard":
             self.loss = batch_hard_triplet_loss
-            
         elif self.params.triplet_strategy == "batch_adaptive":
             self.loss = adapted_triplet_loss
-            
-        current_time = datetime.datetime.now().strftime("%d-%m-%Y_%H%M%S")
-        log_dir += current_time + '/train/'
-        self.train_summary_writer = tf.summary.create_file_writer(log_dir)
-            
+
         # if restore:
-        self.checkpoint.restore(self.ckptmanager.latest_checkpoint)
+#        self.checkpoint.restore(self.ckptmanager.latest_checkpoint)
         # print(f'\nRestored from Checkpoint : {self.ckptmanager.latest_checkpoint}\n')
         
         # else:
             # print('\nIntializing from scratch\n')
             
-        self.train_dataset, self.train_samples = get_dataset(data_dir, self.params, 'train')
+        self.train_dataloader, self.train_samples = get_dataloader(data_dir, self.params, 'train')
         
         if self.valid:
-            self.valid_dataset, self.valid_samples = get_dataset(valid_dir, self.params, 'val')
+            self.valid_dataset, self.valid_samples = get_dataloader(valid_dir, self.params, 'val')
         
         
     def __call__(self, epoch):
-        
         for i in range(epoch):
             self.train(i)
             if self.valid:
-                self.validate(i)
+                with torch.no_grad():
+                    self.validate(i)
 
         
     def train(self, epoch, last=False):
@@ -72,27 +61,21 @@ class Trainer():
         # pbar = ProgressBar(widgets=widgets, max_value=int(self.train_samples // self.params.batch_size) + 20).start()
         total_loss = 0
 
-        for i, (images, labels) in enumerate(self.train_dataset):
+        for i, (images, labels) in enumerate(self.train_dataloader):
             loss = self.train_step(images, labels, last)
             total_loss += loss
             
-            with self.train_summary_writer.as_default():
-                tf.summary.scalar('train_step_loss', loss, step=self.checkpoint.train_steps)
-            self.checkpoint.train_steps.assign_add(1)
-
-        if last:
-            # Dump the characteristic embeddings into a pickle
-            np.save('embeddings.npy', self.dictionary_embeddings)
-
-        with self.train_summary_writer.as_default():
-            tf.summary.scalar('train_batch_loss', total_loss, step=epoch)
+            print('train_step_loss: {}'.format(loss))
+            print('train_batch_loss: {}'.format(total_loss))
         
-        self.checkpoint.epoch.assign_add(1)
-        if int(self.checkpoint.epoch) % 5 == 0:
+        if (epoch + 1) % 5 == 0:
             save_path = self.ckptmanager.save()
             print('\nTrain Loss over epoch {}: {}'.format(epoch, total_loss))
-            print(f'Saved Checkpoint for step {self.checkpoint.epoch.numpy()} : {save_path}\n')
+            torch.save(self.model.state_dict(), 'model.pt')
+            print(f'Saved Checkpoint for step {epoch+1} : {save_path}\n')
 
+        if last:
+            np.save('embeddings.npy', self.dictionary_embeddings)
             
     def validate(self, epoch):
         # widgets = [f'Valid epoch {epoch} :', Percentage(), ' ', Bar('#'), ' ',Timer(), ' ', ETA(), ' ']
@@ -102,56 +85,50 @@ class Trainer():
         for i, (images, labels) in enumerate(self.valid_dataset):
             loss = self.valid_step(images, labels)
             total_loss += loss
-            
-            with self.train_summary_writer.as_default():
-                tf.summary.scalar('valid_step_loss', loss, step=self.checkpoint.valid_steps)
-            self.checkpoint.valid_steps.assign_add(1)
-        print('\n')
-        with self.train_summary_writer.as_default():
-            tf.summary.scalar('valid_batch_loss', total_loss, step=epoch)
+            print("valid_step_loss: {}".format(loss))
+            print("valid_batch_loss: {}".format(total_loss))
         
         if (epoch+1)%5 == 0:
             print('\nValidation Loss over epoch {}: {}\n'.format(epoch, total_loss)) 
         
     def train_step(self, images, labels, last):
+        optimizer.zero_grad()
 
-        with tf.GradientTape() as tape:
-            embeddings = self.model(images)
-            embeddings = tf.math.l2_normalize(embeddings, axis=1, epsilon=1e-10)
-            loss = self.loss(labels, embeddings, self.params.margin, self.params.squared)
-            if last:
-                embeddings_ = embeddings.numpy()
-                batch_size = embeddings_.shape[0]
-                for i in range(batch_size):
-                    if DISPLAY:
-                        plt.title(labels.numpy()[i].decode('utf-8'))
-                        plt.ylim((0,40))
+        embeddings = self.model(images)
+        embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1, eps=1e-10)
+        loss = self.loss(labels, embeddings, self.params.margin, self.params.squared)
 
-                        plt.hist(embeddings_[i, :])
-                        plt.show()
+        if last:
+            embeddings_ = embeddings.detach().cpu().numpy()
+            batch_size = embeddings_.shape[0]
+            for i in range(batch_size):
+                if DISPLAY:
+                    plt.title(labels.numpy()[i].decode('utf-8'))
+                    plt.ylim((0,40))
 
-                    label = labels.numpy()[i].decode('utf-8')
+                    plt.hist(embeddings_[i, :])
+                    plt.show()
 
-                    # Check if the dictionary has the label stored.
-                    if label not in self.dictionary_embeddings:
-                        self.dictionary_embeddings[label] = embeddings_[i,:]
-                    else:
-                        self.dictionary_embeddings[label] = np.add(embeddings_[i,:], self.dictionary_embeddings[label])
-                        self.dictionary_embeddings[label] = self.dictionary_embeddings[label] / 2
+                label = labels.detach().cpu().numpy()[i].decode('utf-8')
+
+                # Check if the dictionary has the label stored.
+                if label not in self.dictionary_embeddings:
+                    self.dictionary_embeddings[label] = embeddings_[i,:]
+                else:
+                    self.dictionary_embeddings[label] = np.add(embeddings_[i,:], self.dictionary_embeddings[label])
+                    self.dictionary_embeddings[label] = self.dictionary_embeddings[label] / 2
 
 
-        grads = tape.gradient(loss, self.model.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
+        loss.backwards()
+        self.optimizer.step()
         
         return loss
     
     
     def valid_step(self, images, labels):
-        
         embeddings = self.model(images)
-        embeddings = tf.math.l2_normalize(embeddings, axis=1, epsilon=1e-10)
+        embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1, eps=1e-10)
         loss = self.loss(labels, embeddings, self.params.margin, self.params.squared)
-            
         return loss
 
 
