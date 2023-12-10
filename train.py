@@ -17,15 +17,16 @@ DISPLAY = False
 class Trainer():
     
     def __init__(self, json_path, data_dir, valid_dir, validate, ckpt_dir, log_dir, restore):
-        
+        print("Reached __init__")
+
         self.params      = Params(json_path)
         self.valid       = validate
         self.model       = face_model(self.params)
 
         initial_learning_rate = self.params.learning_rate
-        self.optimizer   = torch.optim.Adam(lr=self.lr_schedule, betas=(0.9, 0.999), eps=0.1)
-        self.optimizer   = torch.optim.lr_scheduler.ExponentialLR(
-            self.optimizer, gamma=0.96, decay_steps=10_000)
+        self.optimizer   = torch.optim.Adam(self.model.parameters(), lr=initial_learning_rate, betas=(0.9, 0.999), eps=0.1)
+        self.lr_scheduler   = torch.optim.lr_scheduler.ExponentialLR(
+            self.optimizer, gamma=0.96)
         self.dictionary_embeddings = {}
 
         if self.params.triplet_strategy == "batch_all":
@@ -41,12 +42,14 @@ class Trainer():
         
         # else:
             # print('\nIntializing from scratch\n')
-            
-        self.train_dataloader, self.train_samples = get_dataloader(data_dir, self.params, 'train')
         
+        print("Setting up train dataloader")
+        self.train_dataloader = get_dataloader(data_dir, self.params, 'train')
+        self.train_samples = len(self.train_dataloader)
+
         if self.valid:
-            self.valid_dataset, self.valid_samples = get_dataloader(valid_dir, self.params, 'val')
-        
+            self.valid_dataloader = get_dataloader(valid_dir, self.params, 'val')
+            self.valid_samples = len(self.valid_dataloader)
         
     def __call__(self, epoch):
         for i in range(epoch):
@@ -69,9 +72,9 @@ class Trainer():
             print('train_batch_loss: {}'.format(total_loss))
         
         if (epoch + 1) % 5 == 0:
-            save_path = self.ckptmanager.save()
             print('\nTrain Loss over epoch {}: {}'.format(epoch, total_loss))
-            torch.save(self.model.state_dict(), 'model.pt')
+            save_path = 'model.pt'
+            torch.save(self.model.state_dict(), save_path)
             print(f'Saved Checkpoint for step {epoch+1} : {save_path}\n')
 
         if last:
@@ -90,12 +93,16 @@ class Trainer():
         
         if (epoch+1)%5 == 0:
             print('\nValidation Loss over epoch {}: {}\n'.format(epoch, total_loss)) 
-        
+    
+    step_count = 0
     def train_step(self, images, labels, last):
-        optimizer.zero_grad()
+        self.optimizer.zero_grad()
 
         embeddings = self.model(images)
         embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1, eps=1e-10)
+
+        #print(len(images), labels, last)
+
         loss = self.loss(labels, embeddings, self.params.margin, self.params.squared)
 
         if last:
@@ -109,7 +116,7 @@ class Trainer():
                     plt.hist(embeddings_[i, :])
                     plt.show()
 
-                label = labels.detach().cpu().numpy()[i].decode('utf-8')
+                label = self.train_dataloader.image_labels_unique[labels.detach().cpu().numpy()[i]]
 
                 # Check if the dictionary has the label stored.
                 if label not in self.dictionary_embeddings:
@@ -119,9 +126,12 @@ class Trainer():
                     self.dictionary_embeddings[label] = self.dictionary_embeddings[label] / 2
 
 
-        loss.backwards()
-        self.optimizer.step()
-        
+        loss.backward()
+        self.step_count += 1
+        if self.step_count % 10_000 != 0:
+            self.optimizer.step()
+        else:
+            self.lr_scheduler.step()
         return loss
     
     
@@ -151,8 +161,10 @@ if __name__ == '__main__':
                         help="Restart the model from the previous Checkpoint")
     args = parser.parse_args()
     
+    print("Setting up trainer")
     trainer = Trainer(args.params_dir, args.data_dir, args.validate, 1, args.ckpt_dir, args.log_dir, args.restore)
-    
+
+    print("Training")    
     for i in range(args.epoch):
         if i is (args.epoch - 1):
             trainer.train(i, True)

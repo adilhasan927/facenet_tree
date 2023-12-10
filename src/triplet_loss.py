@@ -223,7 +223,6 @@ def adapted_triplet_loss(labels, embeddings, lambda_=1, margin=10, squared=False
     Returns:
         adaptive_triplet_loss: scalar tensor containing the triplet loss (L = L_triplet + λ ∗ L_match)
     """
-    
     # Get the pairwise distance matrix
     pairwise_dist = _pairwise_distances(embeddings, squared=squared)
 

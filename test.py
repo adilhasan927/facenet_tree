@@ -1,3 +1,5 @@
+# NOTICE: test.py needs to be updated to work.
+
 import os
 import argparse
 import cv2

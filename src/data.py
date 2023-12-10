@@ -5,6 +5,8 @@ import cv2
 from PIL import Image
 import torch
 import torchvision
+from pathlib import Path
+from einops import rearrange, reduce, repeat
 
 # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
@@ -23,46 +25,64 @@ def map_func(feature_path, label, image_size):
     return res, label
 
 class OurDataset(torch.utils.data.Dataset):
-    def __init__(image_paths, image_labels, image_size):
+    def __init__(self, image_paths, image_labels, image_size,
+        image_labels_unique=None,
+        transform=lambda x: x, target_transform=lambda x: x):
         self.image_paths = image_paths
         self.image_labels = image_labels
         self.image_size = image_size
-
+        self.transform = transform
+        self.target_transform = target_transform
+        self.image_labels_unique = image_labels_unique
+        
     def __len__(self):
         return len(self.image_labels)
 
     def __getitem__(self, idx):
         img_path = self.image_paths[idx]
         image = np.load(img_path)
+
         image = image.astype('float32')
         image = np.nan_to_num(image)
         image = cv2.resize(
             image,
             dsize=(self.image_size, self.image_size),
             interpolation=cv2.INTER_CUBIC)
-        image = torch.Tensor(image, dtype=torch.float64)
+        image = torch.tensor(image, dtype=torch.float32)
+        image = rearrange(image, 'h w c -> c h w')
         label = self.image_labels[idx]
-        return image, label
+
+        return self.transform(image), self.target_transform(label)
 
 def get_dataset(dir, params, phase='train'):
-
-    dir_paths  =  os.listdir(dir)
-    dir_paths  =  [os.path.join(dir, dir_path) for dir_path in dir_paths]
+    dir = Path(dir)
+    dir_paths  =  [i for i in dir.iterdir() if i.is_dir()]
 
     image_paths = []
     image_labels = []
-    for dir_path in dir_paths:
-        for image_path in os.listdir(dir_path):
-            image_paths.append(os.path.join(dir_path, image_path))
-            image_labels.append(dir_path.split('/')[-1])
 
-    dataset =  OurDataset(image_paths, image_label)
+    for dir_path in dir_paths:
+        for image_path in dir_path.iterdir():
+            if image_path.suffix != '.npy':
+                continue
+            image_paths.append(image_path)
+            image_labels.append(image_path.parent.stem)
+
+    image_labels_unique = list(set(image_labels))
+    image_labels = [image_labels_unique.index(i) for i in image_labels]
+
+    dataset =  OurDataset(image_paths, image_labels, params.image_size, image_labels_unique=image_labels_unique)
 
     return dataset
 
+class OurDataloader(torch.utils.data.DataLoader):
+    def __init__(self, dataset, *args, **kwargs):
+        super().__init__(dataset, *args, **kwargs)
+        self.image_labels_unique = dataset.image_labels_unique
+
 def get_dataloader(dir, params, phase='train'):
     dataset = get_dataset(dir, params, phase)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=params.batch_size)
+    dataloader = OurDataloader(dataset, batch_size=params.batch_size)
     return dataloader
 
 

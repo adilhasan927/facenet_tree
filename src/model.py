@@ -2,6 +2,7 @@ import os
 import torch
 import torchvision
 from torchvision import transforms
+from einops import rearrange, reduce, repeat
 
 # Model for 5 base channels + 5 means
 class face_model(torch.nn.Module):
@@ -48,8 +49,6 @@ class face_model(torch.nn.Module):
         x = self.activation(x)
         x = self.conversion_layer_1(x)
         x = self.activation(x)
-        print(x.shape)
         x = self.base_model(x)
-        x = torch.flatten(x)
         x = self.embedding_layer(x)
         return x
